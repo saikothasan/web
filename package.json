@@ -8,13 +8,13 @@
     "deploy": "wrangler deploy"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^4.20240620.0",
-    "typescript": "^5.4.5",
-    "wrangler": "^3.60.3"
+    "@cloudflare/workers-types": "^4.20250709.0",
+    "typescript": "^5.8.3",
+    "wrangler": "^4.24.0"
   },
   "dependencies": {
-    "@cloudflare/puppeteer": "^0.0.6",
-    "zod": "^3.23.8",
-    "zod-to-json-schema": "^3.23.0"
+    "@cloudflare/puppeteer": "^1.0.3",
+    "zod": "^4.0.0",
+    "zod-to-json-schema": "^3.24.6"
   }
 }
