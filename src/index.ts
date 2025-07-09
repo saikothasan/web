@@ -1,88 +1,144 @@
-import { z } from "zod";
-import puppeteer from "@cloudflare/puppeteer";
-import zodToJsonSchema from "zod-to-json-schema";
+// src/index.ts
+
+import puppeteer, { Page } from '@cloudflare/puppeteer';
+import { z } from 'zod';
+
+// Define the environment bindings for type safety
+export interface Env {
+	BROWSER: Fetcher;
+	AI: Ai;
+}
+
+// --- Input Validation Schema using Zod ---
+const RenderOptionsSchema = z.object({
+	viewport: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).optional(),
+	fullPage: z.boolean().optional().default(false),
+	waitForSelector: z.string().optional(),
+});
+
+const RequestSchema = z
+	.object({
+		url: z.string().url({ message: 'A valid URL is required.' }),
+		action: z.enum(['analyze_image', 'summarize_text', 'extract_html']),
+		prompt: z.string().optional(),
+		model: z
+			.string()
+			.optional()
+			.default('@cf/llava-1.5-7b-hf'), // Default to LLaVA for image analysis
+		renderOptions: RenderOptionsSchema.optional().default({}),
+	})
+	.refine((data) => !(data.action === 'analyze_image' && !data.prompt), {
+		message: 'A `prompt` is required when `action` is `analyze_image`.',
+		path: ['prompt'],
+	});
+
+
+/**
+ * Helper function to launch a browser, navigate to a URL, and handle wait conditions.
+ * This avoids code duplication across different actions.
+ */
+async function launchAndNavigate(env: Env, url: string, options: z.infer<typeof RenderOptionsSchema>): Promise<Page> {
+	const browser = await puppeteer.launch(env.BROWSER);
+	const page = await browser.newPage();
+	if (options.viewport) {
+		await page.setViewport(options.viewport);
+	}
+	await page.goto(url, { waitUntil: 'networkidle2' });
+	if (options.waitForSelector) {
+		await page.waitForSelector(options.waitForSelector, { timeout: 10000 }); // 10s timeout
+	}
+	return page;
+}
 
 export default {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname != "/") {
-      return new Response("Not found");
-    }
+	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
+		if (request.method !== 'POST') {
+			return new Response('Method Not Allowed. Please use POST.', { status: 405 });
+		}
+		
+		const startTime = Date.now();
+		
+		try {
+			const body = await request.json();
 
-    // Your prompt and site to scrape
-    const userPrompt = "Extract the first post only.";
-    const targetUrl = "https://labs.apnic.net/";
+			// --- 1. Validate Input ---
+			const validationResult = RequestSchema.safeParse(body);
+			if (!validationResult.success) {
+				return Response.json(
+					{ success: false, error: { message: 'Invalid request body.', details: validationResult.error.flatten() } },
+					{ status: 400 }
+				);
+			}
 
-    // Launch browser
-    const browser = await puppeteer.launch(env.MY_BROWSER);
-    const page = await browser.newPage();
-    await page.goto(targetUrl);
+			const { url, action, prompt, model, renderOptions } = validationResult.data;
 
-    // Get website text
-    const renderedText = await page.evaluate(() => {
-      // @ts-ignore js code to run in the browser context
-      const body = document.querySelector("body");
-      return body ? body.innerText : "";
-    });
-    // Close browser since we no longer need it
-    await browser.close();
+			let data;
+			let page: Page | null = null;
 
-    // define your desired json schema
-    const outputSchema = zodToJsonSchema(
-      z.object({ title: z.string(), url: z.string(), date: z.string() })
-    );
+			// --- 2. Route to the Correct Action ---
+			switch (action) {
+				case 'analyze_image': {
+					page = await launchAndNavigate(env, url, renderOptions);
+					const screenshotBuffer = await page.screenshot({ fullPage: renderOptions.fullPage });
+					
+					const inputs = {
+						prompt: prompt!, // Zod refinement ensures prompt exists
+						image: [...new Uint8Array(screenshotBuffer)],
+					};
+					const aiResponse = await env.AI.run(model, inputs);
+					data = { aiResponse: aiResponse.response };
+					break;
+				}
 
-    // Example prompt
-    const prompt = `
-    You are a sophisticated web scraper. You are given the user data extraction goal and the JSON schema for the output data format.
-    Your task is to extract the requested information from the text and output it in the specified JSON schema format:
+				case 'summarize_text': {
+					page = await launchAndNavigate(env, url, renderOptions);
+					const pageText = await page.evaluate(() => document.body.innerText);
+					
+					const summarizationPrompt = `Please provide a concise summary of the following text extracted from a webpage:\n\n---\n\n${pageText.substring(0, 8000)}`; // Limit text length
+					const textModel = '@cf/meta/llama-2-7b-chat-int8'; // Use a text model for this
+					
+					const aiResponse = await env.AI.run(textModel, { prompt: summarizationPrompt });
+					data = { aiResponse: aiResponse.response, modelUsed: textModel };
+					break;
+				}
 
-        ${JSON.stringify(outputSchema)}
+				case 'extract_html': {
+					page = await launchAndNavigate(env, url, renderOptions);
+					const html = await page.content();
+					data = { html };
+					break;
+				}
+				
+				default:
+					// This case should not be reachable due to Zod validation
+					return Response.json({ success: false, error: { message: 'Invalid action.' } }, { status: 400 });
+			}
 
-    DO NOT include anything else besides the JSON output, no markdown, no plaintext, just JSON.
+			// --- 3. Clean up and Respond ---
+			if (page) {
+				await page.browser().close();
+			}
+			
+			const endTime = Date.now();
 
-    User Data Extraction Goal: ${userPrompt}
+			return Response.json({
+				success: true,
+				data,
+				metadata: {
+					url,
+					action,
+					modelUsed: data.modelUsed || model,
+					executionTimeMs: endTime - startTime
+				}
+			});
 
-    Text extracted from the webpage: ${renderedText}`;
-
-    // call llm
-    const result = await getLLMResult(env, prompt, outputSchema);
-    return Response.json(result);
-  }
-
-} satisfies ExportedHandler<Env>;
-
-
-async function getLLMResult(env, prompt: string, schema?: any) {
-  const model = "@hf/thebloke/deepseek-coder-6.7b-instruct-awq"
-  const requestBody = {
-    messages: [{
-      role: "user",
-      content: prompt
-    }],
-  };
-  const aiUrl = `https://api.cloudflare.com/client/v4/accounts/${env.ACCOUNT_ID}/ai/run/${model}`
-
-  const response = await fetch(aiUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Authorization: `Bearer ${env.API_TOKEN}`,
-    },
-    body: JSON.stringify(requestBody),
-  });
-  if (!response.ok) {
-    console.log(JSON.stringify(await response.text(), null, 2));
-    throw new Error(`LLM call failed ${aiUrl} ${response.status}`);
-  }
-
-  // process response
-  const data = await response.json() as { result: { response: string }};
-  const text = data.result.response || '';
-  const value = (text.match(/```(?:json)?\s*([\s\S]*?)\s*```/) || [null, text])[1];
-  try {
-    return JSON.parse(value);
-  } catch(e) {
-    console.error(`${e} . Response: ${value}`)
-  }
-}
+		} catch (e) {
+			console.error('An error occurred:', e);
+			const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
+			return Response.json(
+				{ success: false, error: { message: `An internal server error occurred: ${errorMessage}` } },
+				{ status: 500 }
+			);
+		}
+	},
+};
