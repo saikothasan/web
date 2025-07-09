@@ -5,14 +5,14 @@
     "moduleResolution": "node",
     "lib": ["esnext"],
     "strict": true,
+    "outDir": "dist",
+    "sourceMap": true,
     "esModuleInterop": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true,
-    "isolatedModules": true,
-    /* Cloudflare Workers Types */
-    "types": ["@cloudflare/workers-types"]
+    "types": [
+      "@cloudflare/workers-types",
+      "@cloudflare/puppeteer"
+    ]
   },
   "include": ["src"],
-  "exclude": ["node_modules"]
+  "exclude": ["node_modules", "dist"]
 }
