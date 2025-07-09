@@ -24,7 +24,7 @@ const RequestSchema = z
 		model: z
 			.string()
 			.optional()
-			.default('@cf/llava-1.5-7b-hf'), // Default to LLaVA for image analysis
+			.default('@cf/llava-hf/llava-1.5-7b-hf'), // Default to LLaVA for image analysis
 		renderOptions: RenderOptionsSchema.optional().default({}),
 	})
 	.refine((data) => !(data.action === 'analyze_image' && !data.prompt), {
@@ -95,7 +95,7 @@ export default {
 					const pageText = await page.evaluate(() => document.body.innerText);
 					
 					const summarizationPrompt = `Please provide a concise summary of the following text extracted from a webpage:\n\n---\n\n${pageText.substring(0, 8000)}`; // Limit text length
-					const textModel = '@cf/meta/llama-2-7b-chat-int8'; // Use a text model for this
+					const textModel = '@cf/meta/llama-4-scout-17b-16e-instruct'; // Use a text model for this
 					
 					const aiResponse = await env.AI.run(textModel, { prompt: summarizationPrompt });
 					data = { aiResponse: aiResponse.response, modelUsed: textModel };
