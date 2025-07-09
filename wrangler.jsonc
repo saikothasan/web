@@ -1,25 +1,20 @@
-{
-  // Top-level configuration for your worker
-  "name": "cloudflare-ai-puppeteer-worker",
-  "main": "src/index.ts",
-  "compatibility_date": "2024-07-05",
+# Top-level configuration
+name = "cloudai"
+main = "src/index.ts"
+compatibility_date = "2024-07-05"
 
-  // Binding for Browser Rendering (Puppeteer)
-  // This connects your worker to the browser rendering service.
-  "browser": {
-    "binding": "MY_BROWSER"
-  },
+# Enable Node.js compatibility APIs
+compatibility_flags = ["nodejs_compat"]
 
-  // Environment variables for your worker.
-  // You MUST replace these with your actual Cloudflare details.
-  "vars": {
-    "ACCOUNT_ID": "YOUR_CLOUDFLARE_ACCOUNT_ID"
-    // Note: It is highly recommended to use secrets for API tokens.
-    // To create a secret: npx wrangler secret put API_TOKEN
-    // "API_TOKEN" would then be a secret, not a plain text variable.
-  },
+# Binding for Browser Rendering (Puppeteer)
+# This connects your worker to the browser rendering service.
+[[browser]]
+binding = "MY_BROWSER"
 
-  "triggers": {
-    "crons": []
-  }
-}
+[vars]
+# You MUST replace these with your actual Cloudflare details.
+ACCOUNT_ID = "YOUR_CLOUDFLARE_ACCOUNT_ID"
+# Note: It is highly recommended to use secrets for API tokens.
+# To create a secret: npx wrangler secret put API_TOKEN
+# The API_TOKEN would then be available as an environment variable.
+
