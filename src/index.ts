@@ -1,144 +1,191 @@
-// src/index.ts
+import { Ai } from "@cloudflare/ai"
+import type { ExportedHandler } from "@cloudflare/workers-types"
 
-import puppeteer, { Page } from '@cloudflare/puppeteer';
-import { z } from 'zod';
-
-// Define the environment bindings for type safety
-export interface Env {
-	BROWSER: Fetcher;
-	AI: Ai;
+interface Env {
+  AI: Ai
 }
 
-// --- Input Validation Schema using Zod ---
-const RenderOptionsSchema = z.object({
-	viewport: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).optional(),
-	fullPage: z.boolean().optional().default(false),
-	waitForSelector: z.string().optional(),
-});
+const SYSTEM_PROMPT = `<system_context>You are an advanced assistant specialized in generating Cloudflare Workers code. You have deep knowledge of Cloudflare's platform, APIs, and best practices.</system_context>
 
-const RequestSchema = z
-	.object({
-		url: z.string().url({ message: 'A valid URL is required.' }),
-		action: z.enum(['analyze_image', 'summarize_text', 'extract_html']),
-		prompt: z.string().optional(),
-		model: z
-			.string()
-			.optional()
-			.default('@cf/llava-hf/llava-1.5-7b-hf'), // Default to LLaVA for image analysis
-		renderOptions: RenderOptionsSchema.optional().default({}),
-	})
-	.refine((data) => !(data.action === 'analyze_image' && !data.prompt), {
-		message: 'A `prompt` is required when `action` is `analyze_image`.',
-		path: ['prompt'],
-	});
+<behavior_guidelines>
+- Respond in a friendly and concise manner
+- Focus exclusively on Cloudflare Workers solutions
+- Provide complete, self-contained solutions
+- Default to current best practices
+- Ask clarifying questions when requirements are ambiguous
+</behavior_guidelines>
 
+<code_standards>
+- Generate code in TypeScript by default unless JavaScript is specifically requested
+- Add appropriate TypeScript types and interfaces
+- You MUST import all methods, classes and types used in the code you generate.
+- Use ES modules format exclusively (NEVER use Service Worker format)
+- You SHALL keep all code in a single file unless otherwise specified
+- If there is an official SDK or library for the service you are integrating with, then use it to simplify the implementation.
+- Minimize other external dependencies
+- Do NOT use libraries that have FFI/native/C bindings.
+- Follow Cloudflare Workers security best practices
+- Never bake in secrets into the code
+- Include proper error handling and logging
+- Include comments explaining complex logic
+</code_standards>
 
-/**
- * Helper function to launch a browser, navigate to a URL, and handle wait conditions.
- * This avoids code duplication across different actions.
- */
-async function launchAndNavigate(env: Env, url: string, options: z.infer<typeof RenderOptionsSchema>): Promise<Page> {
-	const browser = await puppeteer.launch(env.BROWSER);
-	const page = await browser.newPage();
-	if (options.viewport) {
-		await page.setViewport(options.viewport);
-	}
-	await page.goto(url, { waitUntil: 'networkidle2' });
-	if (options.waitForSelector) {
-		await page.waitForSelector(options.waitForSelector, { timeout: 10000 }); // 10s timeout
-	}
-	return page;
-}
+<output_format>
+- Use Markdown code blocks to separate code from explanations
+- Provide separate blocks for:
+  1. Main worker code (index.ts/index.js)
+  2. Configuration (wrangler.jsonc)
+  3. Type definitions (if applicable)
+  4. Example usage/tests
+- Always output complete files, never partial updates or diffs
+- Format code consistently using standard TypeScript/JavaScript conventions
+</output_format>
+
+<cloudflare_integrations>
+- When data storage is needed, integrate with appropriate Cloudflare services:
+  - Workers KV for key-value storage, including configuration data, user profiles, and A/B testing
+  - Durable Objects for strongly consistent state management, storage, multiplayer co-ordination, and agent use-cases
+  - D1 for relational data and for its SQL dialect
+  - R2 for object storage, including storing structured data, AI assets, image assets and for user-facing uploads
+  - Hyperdrive to connect to existing (PostgreSQL) databases that a developer may already have
+  - Queues for asynchronous processing and background tasks
+  - Vectorize for storing embeddings and to support vector search (often in combination with Workers AI)
+  - Workers Analytics Engine for tracking user events, billing, metrics and high-cardinality analytics
+  - Workers AI as the default AI API for inference requests. If a user requests Claude or OpenAI however, use the appropriate, official SDKs for those APIs.
+  - Browser Rendering for remote browser capabilties, searching the web, and using Puppeteer APIs.
+  - Workers Static Assets for hosting frontend applications and static files when building a Worker that requires a frontend or uses a frontend framework such as React
+- Include all necessary bindings in both code and wrangler.jsonc
+- Add appropriate environment variable definitions
+</cloudflare_integrations>
+
+<configuration_requirements>
+- Always provide a wrangler.jsonc (not wrangler.toml)
+- Include:
+  - Appropriate triggers (http, scheduled, queues)
+  - Required bindings
+  - Environment variables
+  - Compatibility flags
+  - Set compatibility_date = "2025-03-07"
+  - Set compatibility_flags = ["nodejs_compat"]
+  - Set \`enabled = true\` and \`head_sampling_rate = 1\` for \`[observability]\` when generating the wrangler configuration
+  - Routes and domains (only if applicable)
+  - Do NOT include dependencies in the wrangler.jsonc file
+  - Only include bindings that are used in the code
+</configuration_requirements>
+
+<security_guidelines>
+- Implement proper request validation
+- Use appropriate security headers
+- Handle CORS correctly when needed
+- Implement rate limiting where appropriate
+- Follow least privilege principle for bindings
+- Sanitize user inputs
+</security_guidelines>
+
+<performance_guidelines>
+- Optimize for cold starts
+- Minimize unnecessary computation
+- Use appropriate caching strategies
+- Consider Workers limits and quotas
+- Implement streaming where beneficial
+</performance_guidelines>
+
+<error_handling>
+- Implement proper error boundaries
+- Return appropriate HTTP status codes
+- Provide meaningful error messages
+- Log errors appropriately
+- Handle edge cases gracefully
+</error_handling>
+
+Generate Cloudflare Workers code based on the user's requirements. Always include both the main worker code and the wrangler.jsonc configuration.`
 
 export default {
-	async fetch(request: Request, env: Env, ctx: ExecutionContext): Promise<Response> {
-		if (request.method !== 'POST') {
-			return new Response('Method Not Allowed. Please use POST.', { status: 405 });
-		}
-		
-		const startTime = Date.now();
-		
-		try {
-			const body = await request.json();
+  async fetch(request: Request, env: Env): Promise<Response> {
+    // Handle CORS
+    if (request.method === "OPTIONS") {
+      return new Response(null, {
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Methods": "POST, OPTIONS",
+          "Access-Control-Allow-Headers": "Content-Type",
+        },
+      })
+    }
 
-			// --- 1. Validate Input ---
-			const validationResult = RequestSchema.safeParse(body);
-			if (!validationResult.success) {
-				return Response.json(
-					{ success: false, error: { message: 'Invalid request body.', details: validationResult.error.flatten() } },
-					{ status: 400 }
-				);
-			}
+    if (request.method !== "POST") {
+      return new Response("Method not allowed", {
+        status: 405,
+        headers: {
+          "Access-Control-Allow-Origin": "*",
+        },
+      })
+    }
 
-			const { url, action, prompt, model, renderOptions } = validationResult.data;
+    try {
+      const { prompt } = (await request.json()) as { prompt: string }
 
-			let data;
-			let page: Page | null = null;
+      if (!prompt || prompt.trim().length === 0) {
+        return new Response(
+          JSON.stringify({
+            error: "Prompt is required",
+          }),
+          {
+            status: 400,
+            headers: {
+              "Content-Type": "application/json",
+              "Access-Control-Allow-Origin": "*",
+            },
+          },
+        )
+      }
 
-			// --- 2. Route to the Correct Action ---
-			switch (action) {
-				case 'analyze_image': {
-					page = await launchAndNavigate(env, url, renderOptions);
-					const screenshotBuffer = await page.screenshot({ fullPage: renderOptions.fullPage });
-					
-					const inputs = {
-						prompt: prompt!, // Zod refinement ensures prompt exists
-						image: [...new Uint8Array(screenshotBuffer)],
-					};
-					const aiResponse = await env.AI.run(model, inputs);
-					data = { aiResponse: aiResponse.response };
-					break;
-				}
+      // Use Cloudflare AI to generate the code
+      const ai = new Ai(env.AI)
 
-				case 'summarize_text': {
-					page = await launchAndNavigate(env, url, renderOptions);
-					const pageText = await page.evaluate(() => document.body.innerText);
-					
-					const summarizationPrompt = `Please provide a concise summary of the following text extracted from a webpage:\n\n---\n\n${pageText.substring(0, 8000)}`; // Limit text length
-					const textModel = '@cf/meta/llama-4-scout-17b-16e-instruct'; // Use a text model for this
-					
-					const aiResponse = await env.AI.run(textModel, { prompt: summarizationPrompt });
-					data = { aiResponse: aiResponse.response, modelUsed: textModel };
-					break;
-				}
+      const response = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
+        messages: [
+          {
+            role: "system",
+            content: SYSTEM_PROMPT,
+          },
+          {
+            role: "user",
+            content: prompt,
+          },
+        ],
+        max_tokens: 4000,
+        temperature: 0.1,
+      })
 
-				case 'extract_html': {
-					page = await launchAndNavigate(env, url, renderOptions);
-					const html = await page.content();
-					data = { html };
-					break;
-				}
-				
-				default:
-					// This case should not be reachable due to Zod validation
-					return Response.json({ success: false, error: { message: 'Invalid action.' } }, { status: 400 });
-			}
+      return new Response(
+        JSON.stringify({
+          generatedCode: response.response,
+          timestamp: new Date().toISOString(),
+        }),
+        {
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      )
+    } catch (error) {
+      console.error("Error generating code:", error)
 
-			// --- 3. Clean up and Respond ---
-			if (page) {
-				await page.browser().close();
-			}
-			
-			const endTime = Date.now();
-
-			return Response.json({
-				success: true,
-				data,
-				metadata: {
-					url,
-					action,
-					modelUsed: data.modelUsed || model,
-					executionTimeMs: endTime - startTime
-				}
-			});
-
-		} catch (e) {
-			console.error('An error occurred:', e);
-			const errorMessage = e instanceof Error ? e.message : 'An unknown error occurred.';
-			return Response.json(
-				{ success: false, error: { message: `An internal server error occurred: ${errorMessage}` } },
-				{ status: 500 }
-			);
-		}
-	},
-};
+      return new Response(
+        JSON.stringify({
+          error: "Failed to generate code",
+          details: error instanceof Error ? error.message : "Unknown error",
+        }),
+        {
+          status: 500,
+          headers: {
+            "Content-Type": "application/json",
+            "Access-Control-Allow-Origin": "*",
+          },
+        },
+      )
+    }
+  },
+} satisfies ExportedHandler<Env>
