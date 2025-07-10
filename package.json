@@ -8,7 +8,7 @@
     "start": "wrangler dev"
   },
   "dependencies": {
-    "zod": "^3.22.4"
+    "base64-js": "latest"
   },
   "devDependencies": {
     "@cloudflare/ai": "latest",
