@@ -11,7 +11,7 @@
     "zod": "^3.22.4"
   },
   "devDependencies": {
-    "@cloudflare/puppeteer": "^1.0.3",
+    "@cloudflare/ai": "latest",
     "@cloudflare/workers-types": "^4.20240222.0",
     "typescript": "^5.3.3",
     "wrangler": "^3.30.1"
