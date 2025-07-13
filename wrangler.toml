@@ -11,3 +11,7 @@ binding = "MY_BROWSER"
 # Enable access to Cloudflare AI
 [ai]
 binding = "AI"
+
+[[kv_namespaces]]
+binding = "USERS_NOTIFICATION_CONFIG"
+id = "fb0b89bea88f41dfa93417c96e9da585"
