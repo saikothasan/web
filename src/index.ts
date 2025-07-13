@@ -1,8 +1,10 @@
 import { Ai } from "@cloudflare/ai"
 import type { ExportedHandler } from "@cloudflare/workers-types"
+import type { KVNamespace } from "@cloudflare/workers-types"
 
 interface Env {
   AI: Ai
+  FEEDBACK_KV: KVNamespace // New KV binding for feedback
 }
 
 const SYSTEM_PROMPT = `<system_context>You are an advanced assistant specialized in generating Cloudflare Workers code. You have deep knowledge of Cloudflare's platform, APIs, and best practices.</system_context>
@@ -102,7 +104,7 @@ Generate Cloudflare Workers code based on the user's requirements. Always includ
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
-    // Handle CORS
+    // Handle CORS preflight requests
     if (request.method === "OPTIONS") {
       return new Response(null, {
         headers: {
@@ -113,79 +115,151 @@ export default {
       })
     }
 
-    if (request.method !== "POST") {
-      return new Response("Method not allowed", {
-        status: 405,
-        headers: {
-          "Access-Control-Allow-Origin": "*",
-        },
-      })
+    // Set CORS headers for all responses
+    const corsHeaders = {
+      "Access-Control-Allow-Origin": "*",
+      "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type",
     }
 
-    try {
-      const { prompt } = (await request.json()) as { prompt: string }
+    const url = new URL(request.url)
 
-      if (!prompt || prompt.trim().length === 0) {
+    // Handle code generation requests
+    if (url.pathname === "/generate" && request.method === "POST") {
+      try {
+        const { prompt } = (await request.json()) as { prompt: string }
+
+        if (!prompt || prompt.trim().length === 0) {
+          return new Response(
+            JSON.stringify({
+              error: "Prompt is required",
+            }),
+            {
+              status: 400,
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders,
+              },
+            },
+          )
+        }
+
+        const ai = new Ai(env.AI)
+
+        const response = await ai.run("@cf/qwen/qwen2.5-coder-32b-instruct", {
+          messages: [
+            {
+              role: "system",
+              content: SYSTEM_PROMPT,
+            },
+            {
+              role: "user",
+              content: prompt,
+            },
+          ],
+          max_tokens: 4000,
+          temperature: 0.1,
+        })
+
         return new Response(
           JSON.stringify({
-            error: "Prompt is required",
+            generatedCode: response.response,
+            timestamp: new Date().toISOString(),
           }),
           {
-            status: 400,
             headers: {
               "Content-Type": "application/json",
-              "Access-Control-Allow-Origin": "*",
+              ...corsHeaders,
+            },
+          },
+        )
+      } catch (error) {
+        console.error("Error generating code:", error)
+
+        return new Response(
+          JSON.stringify({
+            error: "Failed to generate code",
+            details: error instanceof Error ? error.message : "Unknown error",
+          }),
+          {
+            status: 500,
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders,
             },
           },
         )
       }
-
-      // Use Cloudflare AI to generate the code
-      const ai = new Ai(env.AI)
-
-      const response = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
-        messages: [
-          {
-            role: "system",
-            content: SYSTEM_PROMPT,
-          },
-          {
-            role: "user",
-            content: prompt,
-          },
-        ],
-        max_tokens: 4000,
-        temperature: 0.1,
-      })
-
-      return new Response(
-        JSON.stringify({
-          generatedCode: response.response,
-          timestamp: new Date().toISOString(),
-        }),
-        {
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        },
-      )
-    } catch (error) {
-      console.error("Error generating code:", error)
-
-      return new Response(
-        JSON.stringify({
-          error: "Failed to generate code",
-          details: error instanceof Error ? error.message : "Unknown error",
-        }),
-        {
-          status: 500,
-          headers: {
-            "Content-Type": "application/json",
-            "Access-Control-Allow-Origin": "*",
-          },
-        },
-      )
     }
+
+    // Handle feedback submission requests
+    if (url.pathname === "/feedback" && request.method === "POST") {
+      try {
+        const { messageId, feedbackType, comment } = (await request.json()) as {
+          messageId: string
+          feedbackType: "good" | "bad"
+          comment?: string
+        }
+
+        if (!messageId || !feedbackType) {
+          return new Response(
+            JSON.stringify({
+              error: "messageId and feedbackType are required",
+            }),
+            {
+              status: 400,
+              headers: {
+                "Content-Type": "application/json",
+                ...corsHeaders,
+              },
+            },
+          )
+        }
+
+        const feedbackData = {
+          feedbackType,
+          comment: comment || null,
+          timestamp: new Date().toISOString(),
+        }
+
+        // Store feedback in KV. Key format: feedback:<messageId>
+        await env.FEEDBACK_KV.put(`feedback:${messageId}`, JSON.stringify(feedbackData))
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Feedback submitted successfully",
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders,
+            },
+          },
+        )
+      } catch (error) {
+        console.error("Error submitting feedback:", error)
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Failed to submit feedback",
+            details: error instanceof Error ? error.message : "Unknown error",
+          }),
+          {
+            status: 500,
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders,
+            },
+          },
+        )
+      }
+    }
+
+    // Default response for other paths
+    return new Response("Not Found", {
+      status: 404,
+      headers: corsHeaders,
+    })
   },
 } satisfies ExportedHandler<Env>
