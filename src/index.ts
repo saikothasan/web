@@ -147,7 +147,7 @@ export default {
 
         const ai = new Ai(env.AI)
 
-        const response = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
+        const response = await ai.run("@cf/qwen/qwen2.5-coder-32b-instruct", {
           messages: [
             {
               role: "system",
