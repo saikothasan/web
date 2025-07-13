@@ -147,7 +147,7 @@ export default {
 
         const ai = new Ai(env.AI)
 
-        const response = await ai.run("@hf/thebloke/deepseek-coder-6.7b-base-awq", {
+        const response = await ai.run("@cf/meta/llama-3.3-70b-instruct-fp8-fast", {
           messages: [
             {
               role: "system",
