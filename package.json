@@ -8,7 +8,8 @@
     "start": "wrangler dev"
   },
   "dependencies": {
-    "base64-js": "latest"
+    "base64-js": "latest",
+    "@cloudflare/puppeteer": "latest"
   },
   "devDependencies": {
     "@cloudflare/ai": "latest",
