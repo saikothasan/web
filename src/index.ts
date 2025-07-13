@@ -147,7 +147,7 @@ export default {
 
         const ai = new Ai(env.AI)
 
-        const response = await ai.run("@cf/qwen/qwen2.5-coder-32b-instruct", {
+        const response = await ai.run("@cf/meta/llama-4-scout-17b-16e-instruct", {
           messages: [
             {
               role: "system",
@@ -158,7 +158,7 @@ export default {
               content: prompt,
             },
           ],
-          max_tokens: 4000,
+          max_tokens: 100000,
           temperature: 0.1,
         })
 
@@ -309,12 +309,12 @@ export default {
         Text:
         ${pageContent}`
 
-        const aiResponse = await ai.run("@cf/qwen/qwen2.5-coder-32b-instruct", {
+        const aiResponse = await ai.run("@cf/google/gemma-3-12b-it", {
           messages: [
             { role: "system", content: "You are a helpful assistant that summarizes web page content." },
             { role: "user", content: aiPrompt },
           ],
-          max_tokens: 1000,
+          max_tokens: 2000,
           temperature: 0.2,
         })
 
