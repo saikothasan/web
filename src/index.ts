@@ -309,7 +309,7 @@ export default {
         Text:
         ${pageContent}`
 
-        const aiResponse = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
+        const aiResponse = await ai.run("@cf/qwen/qwen2.5-coder-32b-instruct", {
           messages: [
             { role: "system", content: "You are a helpful assistant that summarizes web page content." },
             { role: "user", content: aiPrompt },
