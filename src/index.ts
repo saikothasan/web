@@ -1,10 +1,12 @@
 import { Ai } from "@cloudflare/ai"
 import type { ExportedHandler } from "@cloudflare/workers-types"
-import type { KVNamespace } from "@cloudflare/workers-types"
+import type { KVNamespace, Fetcher } from "@cloudflare/workers-types" // Import Fetcher for Browser Rendering
+import puppeteer from "@cloudflare/puppeteer" // Import puppeteer
 
 interface Env {
   AI: Ai
-  FEEDBACK_KV: KVNamespace // New KV binding for feedback
+  FEEDBACK_KV: KVNamespace
+  BROWSER_RENDERING: Fetcher // New binding for Browser Rendering
 }
 
 const SYSTEM_PROMPT = `<system_context>You are an advanced assistant specialized in generating Cloudflare Workers code. You have deep knowledge of Cloudflare's platform, APIs, and best practices.</system_context>
@@ -25,8 +27,7 @@ const SYSTEM_PROMPT = `<system_context>You are an advanced assistant specialized
 - You SHALL keep all code in a single file unless otherwise specified
 - If there is an official SDK or library for the service you are integrating with, then use it to simplify the implementation.
 - Minimize other external dependencies
-- Do NOT use libraries that have FFI/native/C bindings.
-- Follow Cloudflare Workers security best practices
+- Do NOT use libraries that have FFI/native/C bindings.- Follow Cloudflare Workers security best practices
 - Never bake in secrets into the code
 - Include proper error handling and logging
 - Include comments explaining complex logic
@@ -146,7 +147,7 @@ export default {
 
         const ai = new Ai(env.AI)
 
-        const response = await ai.run("@cf/qwen/qwen2.5-coder-32b-instruct", {
+        const response = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
           messages: [
             {
               role: "system",
@@ -243,6 +244,98 @@ export default {
           JSON.stringify({
             success: false,
             error: "Failed to submit feedback",
+            details: error instanceof Error ? error.message : "Unknown error",
+          }),
+          {
+            status: 500,
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders,
+            },
+          },
+        )
+      }
+    }
+
+    // Handle link analysis requests
+    if (url.pathname === "/analyze-link" && request.method === "POST") {
+      try {
+        const { url: urlToAnalyze } = (await request.json()) as { url: string }
+
+        if (!urlToAnalyze) {
+          return new Response(JSON.stringify({ error: "URL to analyze is required" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          })
+        }
+
+        // Basic URL validation
+        try {
+          new URL(urlToAnalyze)
+        } catch (e) {
+          return new Response(JSON.stringify({ error: "Invalid URL format" }), {
+            status: 400,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          })
+        }
+
+        const browser = await puppeteer.launch(env.BROWSER_RENDERING)
+        const page = await browser.newPage()
+
+        let pageContent = ""
+        try {
+          await page.goto(urlToAnalyze, { waitUntil: "domcontentloaded", timeout: 30000 }) // 30 sec timeout
+          pageContent = await page.$eval("body", (el) => el.textContent || "")
+        } catch (e) {
+          console.error(`Error navigating to or extracting content from ${urlToAnalyze}:`, e)
+          return new Response(
+            JSON.stringify({
+              error: `Failed to load or extract content from URL: ${e instanceof Error ? e.message : "Unknown error"}`,
+            }),
+            { status: 500, headers: { "Content-Type": "application/json", ...corsHeaders } },
+          )
+        } finally {
+          await browser.close() // Ensure browser is closed
+        }
+
+        if (pageContent.length > 10000) {
+          // Limit content sent to AI to avoid token limits
+          pageContent = pageContent.substring(0, 10000) + "..."
+        }
+
+        const ai = new Ai(env.AI)
+        const aiPrompt = `Summarize the following text from a webpage. Focus on key information and main points. If the text is too short or irrelevant, state that.
+        
+        Text:
+        ${pageContent}`
+
+        const aiResponse = await ai.run("@cf/meta/llama-3.1-8b-instruct", {
+          messages: [
+            { role: "system", content: "You are a helpful assistant that summarizes web page content." },
+            { role: "user", content: aiPrompt },
+          ],
+          max_tokens: 1000,
+          temperature: 0.2,
+        })
+
+        return new Response(
+          JSON.stringify({
+            analysis: aiResponse.response,
+            originalUrl: urlToAnalyze,
+            timestamp: new Date().toISOString(),
+          }),
+          {
+            headers: {
+              "Content-Type": "application/json",
+              ...corsHeaders,
+            },
+          },
+        )
+      } catch (error) {
+        console.error("Error analyzing link:", error)
+        return new Response(
+          JSON.stringify({
+            error: "Failed to analyze link",
             details: error instanceof Error ? error.message : "Unknown error",
           }),
           {
